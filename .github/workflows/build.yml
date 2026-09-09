@@ -24,63 +24,62 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Extract source
+        shell: bash
+        run: |
+          set -e
+
+          ZIP=$(find . -maxdepth 2 -type f -name "*source*.zip" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "Source ZIP bulunamadı!"
+            exit 1
+          fi
+
+          echo "ZIP: $ZIP"
+
+          mkdir -p source
+          unzip -q "$ZIP" -d source
+
+          echo "Çıkarılan dosyalar:"
+          find source -maxdepth 4 -type f | head -100
+
       - name: Find Gradle project
         shell: bash
         run: |
           set -e
 
-          GRADLEW=$(find . -type f -name "gradlew" \
-            -not -path "./.git/*" \
-            | head -n 1)
+          GRADLEW=$(find source -type f -name "gradlew" | head -n 1)
 
           if [ -z "$GRADLEW" ]; then
             echo "gradlew bulunamadı!"
-            echo "Dosyalar:"
-            find . -maxdepth 4 -type f | sort
+            find source -maxdepth 5 -type f | sort
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$GRADLEW")
-          PROJECT_DIR="${PROJECT_DIR#./}"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Gradle projesi:"
+          echo "Proje:"
           echo "$PROJECT_DIR"
 
       - name: Make Gradle executable
-        shell: bash
-        run: |
-          chmod +x "$PROJECT_DIR/gradlew"
-
-      - name: Gradle version
-        shell: bash
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          ./gradlew --version
-
-      - name: Clean
-        shell: bash
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          ./gradlew clean --no-daemon --stacktrace
+        run: chmod +x "$PROJECT_DIR/gradlew"
 
       - name: Build
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          ./gradlew build --no-daemon --stacktrace --info
+          ./gradlew clean build \
+            --no-daemon \
+            --stacktrace
 
       - name: Show JAR
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          echo "=== BUILD/LIBS ==="
+          echo "=== JAR ==="
           ls -lah build/libs/
-
-          echo
-          echo "=== JARLAR ==="
-          find build/libs -type f -name "*.jar" -print
+          find build/libs -name "*.jar" -print
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
