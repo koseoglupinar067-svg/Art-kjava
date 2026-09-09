@@ -2,327 +2,90 @@ name: Build KiteWare
 
 on:
   workflow_dispatch:
-
   push:
-    branches:
-      - "**"
-
-  pull_request:
     branches:
       - "**"
 
 permissions:
   contents: read
 
-concurrency:
-  group: kiteware-build-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  JAVA_VERSION: "21"
-  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4G -Dfile.encoding=UTF-8"
-  GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
-
 jobs:
-
-  # ============================================================
-  # CHECK
-  # ============================================================
-
-  check:
-    name: Check Project
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: gradle
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Check project files
-        shell: bash
-        run: |
-          set -eux
-
-          echo "======================================"
-          echo "PROJECT STRUCTURE"
-          echo "======================================"
-
-          pwd
-          echo
-
-          echo "Root files:"
-          find . -maxdepth 2 -type f \
-            ! -path "./.git/*" \
-            | sort \
-            | head -300
-
-          echo
-          echo "======================================"
-          echo "GRADLE FILES"
-          echo "======================================"
-
-          test -f "./gradlew"
-          test -f "./settings.gradle" || \
-          test -f "./settings.gradle.kts"
-
-          test -f "./build.gradle" || \
-          test -f "./build.gradle.kts"
-
-          echo "Gradle wrapper found."
-
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-      - name: Check Gradle version
-        run: ./gradlew --version
-
-
-  # ============================================================
-  # BUILD
-  # ============================================================
-
   build:
     name: Build JAR
     runs-on: ubuntu-latest
-    needs: check
 
     steps:
-
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
-          cache: gradle
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: false
-
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-      # ----------------------------------------------------------
-      # Environment information
-      # ----------------------------------------------------------
-
-      - name: Print environment
+      - name: Find Gradle project
         shell: bash
         run: |
-          set -eux
+          set -e
 
-          echo "======================================"
-          echo "JAVA"
-          echo "======================================"
+          GRADLEW=$(find . -type f -name "gradlew" \
+            -not -path "./.git/*" \
+            | head -n 1)
 
-          java -version
-
-          echo
-          echo "======================================"
-          echo "GRADLE"
-          echo "======================================"
-
-          ./gradlew --version
-
-          echo
-          echo "======================================"
-          echo "SYSTEM"
-          echo "======================================"
-
-          uname -a
-          echo
-          df -h
-          echo
-          free -h
-
-      # ----------------------------------------------------------
-      # Validate Gradle
-      # ----------------------------------------------------------
-
-      - name: Validate Gradle wrapper
-        run: ./gradlew --version
-
-      # ----------------------------------------------------------
-      # Clean old build
-      # ----------------------------------------------------------
-
-      - name: Clean project
-        run: |
-          ./gradlew clean \
-            --no-daemon \
-            --stacktrace
-
-      # ----------------------------------------------------------
-      # Resolve dependencies
-      # ----------------------------------------------------------
-
-      - name: Resolve dependencies
-        run: |
-          ./gradlew dependencies \
-            --no-daemon \
-            --stacktrace
-
-      # ----------------------------------------------------------
-      # Build
-      # ----------------------------------------------------------
-
-      - name: Build project
-        run: |
-          ./gradlew build \
-            --no-daemon \
-            --stacktrace \
-            --info
-
-      # ----------------------------------------------------------
-      # Show output
-      # ----------------------------------------------------------
-
-      - name: Show build output
-        if: always()
-        shell: bash
-        run: |
-          echo "======================================"
-          echo "BUILD/LIBS"
-          echo "======================================"
-
-          if [ -d "build/libs" ]; then
-            ls -lah build/libs/
-          else
-            echo "build/libs does not exist."
+          if [ -z "$GRADLEW" ]; then
+            echo "gradlew bulunamadı!"
+            echo "Dosyalar:"
+            find . -maxdepth 4 -type f | sort
+            exit 1
           fi
 
-          echo
-          echo "======================================"
-          echo "ALL JARS"
-          echo "======================================"
+          PROJECT_DIR=$(dirname "$GRADLEW")
+          PROJECT_DIR="${PROJECT_DIR#./}"
 
-          find . \
-            -type f \
-            -name "*.jar" \
-            ! -path "./.gradle/*" \
-            ! -path "./.git/*" \
-            | sort || true
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      # ----------------------------------------------------------
-      # Upload all generated JARs
-      # ----------------------------------------------------------
+          echo "Gradle projesi:"
+          echo "$PROJECT_DIR"
 
-      - name: Upload build JARs
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: KiteWare-JARs-${{ github.run_number }}
-          path: |
-            build/libs/*.jar
-          if-no-files-found: error
-          retention-days: 30
-
-      # ----------------------------------------------------------
-      # Upload logs if build fails
-      # ----------------------------------------------------------
-
-      - name: Upload Gradle logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: KiteWare-build-logs-${{ github.run_number }}
-          path: |
-            ~/.gradle/daemon/**/*.log
-            build/reports/**
-            build/test-results/**
-          if-no-files-found: ignore
-          retention-days: 14
-
-
-  # ============================================================
-  # VERIFY JAR
-  # ============================================================
-
-  verify:
-    name: Verify JAR
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-
-      - name: Download built JAR
-        uses: actions/download-artifact@v4
-        with:
-          pattern: KiteWare-JARs-*
-          path: artifacts
-          merge-multiple: true
-
-      - name: Verify generated JAR
+      - name: Make Gradle executable
         shell: bash
         run: |
-          set -eux
+          chmod +x "$PROJECT_DIR/gradlew"
 
-          echo "======================================"
-          echo "GENERATED JARS"
-          echo "======================================"
+      - name: Gradle version
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          ./gradlew --version
 
-          find artifacts \
-            -type f \
-            -name "*.jar" \
-            -print
+      - name: Clean
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          ./gradlew clean --no-daemon --stacktrace
+
+      - name: Build
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          ./gradlew build --no-daemon --stacktrace --info
+
+      - name: Show JAR
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "=== BUILD/LIBS ==="
+          ls -lah build/libs/
 
           echo
-          echo "======================================"
-          echo "JAR SIZE"
-          echo "======================================"
+          echo "=== JARLAR ==="
+          find build/libs -type f -name "*.jar" -print
 
-          find artifacts \
-            -type f \
-            -name "*.jar" \
-            -exec ls -lh {} \;
-
-          echo
-          echo "======================================"
-          echo "JAR CONTENT CHECK"
-          echo "======================================"
-
-          for jar in artifacts/*.jar; do
-
-            if [ ! -f "$jar" ]; then
-              continue
-            fi
-
-            echo
-            echo "Checking: $jar"
-
-            unzip -t "$jar"
-
-            echo
-            echo "Fabric metadata:"
-
-            unzip -l "$jar" | grep -E \
-              "fabric.mod.json|quilt.mod.json" \
-              || true
-
-          done
-
-      - name: Upload verified JAR
+      - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-          name: KiteWare-Verified-JAR-${{ github.run_number }}
-          path: artifacts/*.jar
+          name: KiteWare-JAR
+          path: ${{ env.PROJECT_DIR }}/build/libs/*.jar
           if-no-files-found: error
           retention-days: 30
